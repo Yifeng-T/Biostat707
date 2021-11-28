@@ -1,0 +1,546 @@
+---
+title: "20211021_Tang_Yifeng_HW2"
+author: "Yifeng Tang"
+date: "10/21/2021"
+output: html_document
+---
+
+# BIOSTAT 707 Homework 2
+
+---
+
+*In this homework, the objectives are to*
+
+1. Use R to examine and preprocess a dataset
+
+2. Implement Unsupervised learning in a real-world problem, including: Principal Component Analysis (PCA), Hierarchical Clustering, and K-means Clustering in R
+
+3. Visualize and understand PCA, Hierarchical Clustering Dendrograms, and K-means Clustering in R
+
+4. Implement a k-Nearest Neighbors (kNN) Classifier on a real world dataset
+
+5. Implement cross validation with kNN Classifier
+
+Assignments will only be accepted in electronic format knitted HTML files from RMD. **5 points will be deducted for every assignment submission is not knitted PDF file.** I recommend you knit the file to HTML and then open the HTML in browser, which will allow you to save the HTML as PDF file. Your code should be adequately commented to clearly explain the steps you used to produce the analyses and your codes and texts must wrap appropriately so that the graders can see all of your work. Homework submissions should be uploaded to Sakai with the naming convention date_lastname_firstname_HW[X].Rmd. For example, my first homework assignment would be named 20210831_Dunn_Jessilyn_HW1.Rmd. **It is important to note that 5 points will be deducted for every assignment that is named improperly.** Please add your answer to each question directly after the question prompt in  the homework .Rmd file template provided below.
+
+```{r message=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(patchwork)
+library(gridExtra)
+library(psych)
+library(corrplot)
+library(ggfortify)
+library(factoextra)
+library(class) #knn
+library(gmodels) # CrossTable()
+library(caret) # creatFolds()
+library(caTools) #sample.split()
+library(ROCR) # prediction(), performance()
+set.seed(2021)
+```
+
+---
+
+## Dataset: Hepatitis C Virus Diagnosis (HCV dataset)
+
+https://archive.ics.uci.edu/ml/datasets/HCV+data
+
+Please refer to this website for additional information about the dataset we are using in this HW.
+
+The target attribute for classification is Category (blood donors vs. Hepatitis C). 
+
+**Attribute Information:**
+
+All attributes except Category and Sex are numerical. The laboratory data are the attributed numbered 5-14 below.
+1) X (Patient ID/No.)
+2) Category (diagnosis) (values: '0=Blood Donor', '0s=suspect Blood Donor', '1=Hepatitis', '2=Fibrosis', '3=Cirrhosis')
+3) Age (in years)
+4) Sex (f,m)
+5) ALB
+6) ALP
+7) ALT
+8) AST
+9) BIL
+10) CHE
+11) CHOL
+12) CREA
+13) GGT
+14) PROT
+
+
+---
+
+## Data Preparation
+1. Download the HCV data titled "hcv.csv" from Sakai and import it into R.  Look at the first 5 lines of the data to learn about the dataset.
+
+```{r echo=TRUE, warning=FALSE, message=FALSE}
+setwd("~/Desktop/2021fall/biostat707/hw2")
+# read in excel as data-frame:
+hcv <- read.csv("hcv.csv")
+# selecting the proper variables:
+head(hcv, 5)
+```
+
+2. Answer the following questions by using the summary function or other methods of your choice:
+* a. How many observations are there?
+* b. How many independent variables are there?
+* c. Which columns have missing values and how many values were missing in each?
+* d. How many observations are there with positive diagnosis and how many are there with negative diagnosis?
+
+**For this question, please type your answers clearly outside of R chunks, and do not just show with running your codes.**
+```{r echo=TRUE, warning=FALSE, message=FALSE}
+summary(hcv)
+positive = nrow(hcv%>%filter(Category == "1=Hepatitis"| Category == "2=Fibrosis"| Category == "3=Cirrhosis"))
+
+negative = nrow(hcv%>%filter(Category == "0=Blood Donor" | Category == "0s=suspect Blood Donor"))
+
+```
+a: 615 observations  
+
+b: 12 independent variables (excluding x and category)  
+
+c: ALB:1, ALP:18, ALT:1, CHOL:10, PROT:1  
+
+d: 75 positive cases; 540 negative cases 
+
+3. Perform the following tasks to prepare this dataset for analysis:
++ Drop observations with NAs
++ Convert *Sex* variable from character string into interger form of 1's and 0's; we will arbitrarily set "m" to 1 and "f" to 0.
++ Convert *Category* variable from characters into Boolean form of TRUE and FALSE, where 0's refer to negative diagnosis ("0=Blood Donor" and "0s=suspect Blood Donor") and 1's refer to positive diagnosis ("1=Hepatitis", "2=Fibrosis", and "3=Cirrhosis")
+```{r echo=TRUE, warning=FALSE, message=FALSE}
+#1 remove na
+hcv = na.omit(hcv)
+
+#2
+hcv$Sex[hcv$Sex == "m"] <- 1
+hcv$Sex[hcv$Sex == "f"] <- 0
+
+#3
+hcv$Category[hcv$Category == "0=Blood Donor"] <- 0
+hcv$Category[hcv$Category == "0s=suspect Blood Donor"] <- 0
+hcv$Category[hcv$Category == "1=Hepatitis"] <- 1
+hcv$Category[hcv$Category == "2=Fibrosis"] <- 1
+hcv$Category[hcv$Category == "3=Cirrhosis"] <- 1
+```
+
+4. Use the function table() to determine how many positive observations and negative observations are in this dataset? Since we observe imbalance in the class labels, we will perform downsampling by propensity matching according to *Age* and *Sex*. A potential set of steps to perform this downsampling is as follows:
++ Separate the dataframe into two dataframes, one with all positive diagnosis and the other with negative diagnosis.
++ Count instances of different combinations of sex and age in the positive diagnosis dataframe.
++ For each combination and corresponding count *n*, randomly select *n* instances from the negative diagnosis for that combination of sex and age.
++ Combine the positive observations and the negative ones you selected.
++ Please set.seed(2021) so that your results are reproducible.
+Eventually, you should have a dataset with the total number of rows that is twice the number of positive observations, with an almost 50:50 split between the positive and negative observations.
+It's possible to encounter situations where for example, you have 3 positive observations who are female and 50 years old, but you only have 2 negative observations who are female and 50 years old. In that case, you don't need to match the number of positive and negative observations in that combination of demographics.
+```{r echo=TRUE, warning=FALSE, message=FALSE}
+#1 using table() to see positive and negative distribution:
+table(hcv$Category)   #533 false 56 postive:
+
+#2 separate dataframe:
+table_positive = hcv%>% filter(Category == 1)
+table_negative = hcv%>% filter(Category == 0)
+
+#3 count combination => 42 unique
+table_positive_com = table_positive%>%group_by(Sex,Age)%>%summarise(n=n())
+
+
+#4
+table_negative_com = NULL
+
+for (i in (1:nrow(table_positive_com))){
+  media_table = table_negative%>%
+    filter(Sex == table_positive_com$Sex[i]  & Age == table_positive_com$Age[i])
+  
+  set.seed(2021)
+  media_table1 = media_table[sample(nrow(media_table), table_positive_com$n[i]), ]
+  table_negative_com = rbind(table_negative_com, media_table1)
+
+}
+
+#5 combine positive and negative
+table_comb = rbind(table_positive, table_negative_com)
+row.names(table_comb) = NULL
+
+```
+
+5. After imputation, use "ggplot" and "facet_wrap" to plot a grid of histograms with 3 plots per row to explore the data shape and distribution of all the independent variables in this dataset. When you plot, remember to select a reasonable number of bins and add legends and labels when appropriate. Adjust the size of the plot display so that you can see all the facets clearly when you knit. Adjust the figure to the appropriate sizes.
+```{r echo=TRUE, warning=FALSE, fig.width=10, fig.height=12}
+table_comb$Sex = as.numeric(table_comb$Sex)
+
+p1 = table_comb %>%gather(Age,Sex,ALB, ALP, ALT, AST, BIL, CHE, CHOL, CREA, GGT, PROT, key = "var",value = "value")      %>% 
+  # use gather to reconstruct data
+  ggplot(aes(x = value)) + 
+  geom_histogram(bins = 15) + 
+  # Facet by different variables
+  facet_wrap(~var, scales = "free", ncol = 3)+
+  theme_bw()+
+  xlab("Variable")+
+  ylab("Number")+
+  ggtitle("Plot for different Variables")+ theme(plot.title = element_text(hjust = 0.5))
+p1
+```
+
+6. The pre-processed dataset needs to be scaled before performing PCA. Please give a brief explanation on why that is the case? 
+Use scale() to standardize the independent variables in this dataset except for sex. Structure a new dataframe that has all the standardized independent variables as well as the binary label column. Hint: you can use as_tibble() function to nicely format the standardized columns into a dataframe.
+```{r echo=TRUE, warning=FALSE, fig.width=10, fig.height=12}
+
+table_exsex = table_comb%>%select(-Sex, -X, -Category)
+table_exsex = scale(table_exsex)
+
+table_comb_cat = table_comb
+table_comb_cat$Category = as.numeric(table_comb_cat$Category)
+
+# after scaled without category
+table_q6 = data.frame(table_comb$Sex, table_exsex)
+
+#after scaled with category
+table_q6_addingCat = data.frame(table_comb$Sex, table_comb_cat$Category, table_exsex)
+
+
+#rename column
+colnames(table_q6)[1] <- "Sex"
+colnames(table_q6_addingCat)[1] <- "Sex"
+colnames(table_q6_addingCat)[2] <- "Category"
+table_q6_addingCat$Category = as.factor(table_q6_addingCat$Category)
+head(table_q6)
+```
+
+## Principal Component Analysis (PCA)
+
+7. Calculate principal components using function princomp() and print the summary of the results.
+```{r echo=TRUE, warning=FALSE, fig.width=10, fig.height=12}
+q7 = princomp(table_q6)
+summary(q7)
+
+```
+
+8.  Plot a scree plot using the screeplot() function.
+```{r echo=TRUE, warning=FALSE, fig.width=13, fig.height=12}
+screeplot(q7, npcs = 13, ylim =c(0, 3.5), main = "scree plot for PC")
+```
+
+9. Plot the following two plots and use patchwork/gridExtra to position the two plots side by side:
+a. proportion of variance explained over the number of principal components
+b. cumulative proportion of variance explained plot over the number of principal components; draw horizontal lines at 88% of variance and 95% variance.
+Note: please remember to clearly label your plots with titles, axis labels and legends when appropriate. You do not need to put down legends if they are not necessary.
+```{r echo=TRUE, warning=FALSE, fig.width=10, fig.height=10}
+#a
+pca_var = q7$sdev^2
+pca_propor = q7$sdev^2/sum(pca_var)
+pname = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+q9 = data.frame(pname, pca_propor)
+
+p9_1 = ggplot(data = q9, aes(x = pname, y = pca_propor)) +geom_line() + geom_point(color = "red") + xlab("PC Number") + 
+  ylab("Proportion of Variance Explain") + ggtitle("PVE VS PC") + 
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5))
+
+
+#b
+initial = 0
+q9_b = q9%>%mutate(Cumulative = 0)
+for (i in (1:nrow(q9_b))){
+  q9_b$Cumulative[i] = initial + q9_b$pca_propor[i]
+  initial = q9_b$Cumulative[i]
+}
+yinter = c(0.88, 0.95)
+line_data = data.frame(yinter, Lines = c("88%Variance", "95%Variance"))
+p9_2 = ggplot(data = q9_b, aes(x = pname, y = Cumulative)) + geom_line() + geom_point(color = "red")  + xlab("PC Number") +   ylab("Cumulative Proportion of PVE") + 
+  ggtitle("Cumulative PVE VS PC") + 
+  theme_bw() + theme(plot.title = element_text(hjust = 0.5)) + 
+  geom_hline(aes(yintercept = yinter, linetype = Lines), line_data)
+
+p9_1+p9_2
+
+```
+
+10. What proportions of variance are captured from the first, second and third principal components? How many principal components do you need to describe at least 88% and 95 % of the variance respective?
+```{r echo=TRUE, warning=FALSE, fig.width=10, fig.height=10}
+round(as.data.frame(pca_propor)[1:3,], 4)
+```
+Proportion of Variance captured by the top three PCs are showed on the top  
+To describe at least 88% variance, we need at least 8 PCs.  
+To describe at least 95% variance, we need at least 10 PCs. 
+
+11. Which are the top 3 variables that contribute the most to the variance captured from PC1? 
+(hint: look at the loadings information)
+```{r echo=TRUE, warning=FALSE, fig.width=10, fig.height=10}
+sort(q7$loadings[,1], decreasing  = TRUE)
+```
+The top 3 varibales contribute the most are ALB, CHE, and CHOL
+
+12. Plot a biplot of the PCA analysis using the biplot() function.
+```{r echo=TRUE, warning=FALSE, fig.width=10, fig.height=8}
+biplot(q7)
+title("biplot of the PCA analysis", line = 2.5)
+```
+
+13. Since the biplot is difficult to discern, we usually use the autoplot() function in package "ggfortify" to display a clearer biplot overlaid with  scatter plot for the first 2 principal components. Remember to add appropriate titles, labels and coloring to display the plot clearly. 
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+t13 = table_q6_addingCat
+t13$Category = as.numeric(t13$Category)
+t13$Category[t13$Category == 1] = "Negative"
+t13$Category[t13$Category == 2] = "Positive"
+autoplot(q7, loadings.label = TRUE, data = t13 ,colour = "Category") +
+    labs(title = "Biplot for the First 2 Principal Components", xlab = "PCA1", ylab = "PCA2") 
+```
+
+## Hierarchical Clustering
+
+14. Calculate a dissimilarity matrix using Euclidean distance and compute hierarchical clustering using the complete linkage method and plot the dendrogram. Use the rect.hclust() function to display dividing the dendrogram into 4 branches. 
+```{r echo=TRUE, warning=FALSE, fig.width=11, fig.height=6}
+hca = hclust(dist(table_q6, method = "euclidean"), method = "complete")
+plot(hca, main="Dendragram for Complete with K=4 branches")
+rect.hclust(hca, k = 4, border = 2:5)
+```
+
+15. Divide the dendrogram into 4 clusters using cutree() function. Then use table() function and the diagnosis label information to compare the composition (positive vs. negative diagnosis/outcome) of each of the 4 clusters. How would you label each of these four clusters (e.g. cluster 1 is TRUE or FALSE, cluster 2 is …, etc.)?
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+hcv_total_cluster <- table_q6_addingCat %>%
+                          mutate(cluster = cutree(hca, k = 4))
+
+q15_accuracy = as.data.frame.matrix(t(table(hcv_total_cluster$Category, hcv_total_cluster$cluster)))
+colnames(q15_accuracy)[1] <- "Neg"
+colnames(q15_accuracy)[2] <- "Pos"
+q15_accuracy
+
+```
+
+* By observing the output, clusters 2,3,4 are positive, while cluster 1 is negative. 
+
+16. What would be the classification accuracy if you follow the assignment of clusters decided in question 16?
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+q15_accuracy = q15_accuracy %>% mutate(Main = pmax(Neg, Pos))
+accuracy = sum(q15_accuracy$Main)/108
+accuracy
+```
+The accuracy is `r accuracy`
+
+17. Perform the same procedure as laid out in question 15 and 16, but for 10 clusters in this question. Calculate the classification accuracy for 10 clusters. 
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+hcv_total_cluster10 <- table_q6_addingCat%>%mutate(cluster = cutree(hca, k = 10))
+q17_accuracy = as.data.frame.matrix(t(table(hcv_total_cluster10$Category, hcv_total_cluster10$cluster)))
+colnames(q17_accuracy)[1] <- "Neg"
+colnames(q17_accuracy)[2] <- "Pos"
+q17_accuracy
+```
+
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+#calculate the accuracy
+q17_accuracy = q17_accuracy %>% mutate(Main = pmax(Neg, Pos))
+accuracy_17 = sum(q17_accuracy$Main)/108
+accuracy_17
+```
+* Based on the output, the accuracy  is around `r accuracy_17`
+18. Now try 4 clusters with Ward's linkage method and plot the dendrogram. Then use table() function to view the clustering result. How would you label each of these 4 clusters? What is the classification accuracy in this case?
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+hca_ward = hclust(dist(table_q6, method = "euclidean"), method = "ward.D")
+plot(hca_ward, ylab = "height", main = "dendrogram of ward's method with k=4clusters")
+rect.hclust(hca_ward, k = 4, border = 2:5)
+
+hcv_total_cluster_W = table_q6_addingCat %>%mutate(cluster = cutree(hca_ward, k = 4))
+
+q18_accuracy = as.data.frame.matrix(t(table(hcv_total_cluster_W$Category, hcv_total_cluster_W$cluster)))
+colnames(q18_accuracy)[1] <- "Neg"
+colnames(q18_accuracy)[2] <- "Pos"
+q18_accuracy
+```
+
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+q18_accuracy = q18_accuracy %>% mutate(Main = pmax(Neg, Pos))
+accuracy_18 = sum(q18_accuracy$Main)/108
+accuracy_18
+```
+* Clusters 3,4 are positive, while cluster 1, 2 are negative
+* Based on output: the accuracy is around `r accuracy_18`
+
+19. Now try 10 clusters with Ward's linkage method and plot the dendrogram. Then use table() function to view the clustering result. How would you label each of these 10 clusters? What is the classification accuracy in this case?
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+
+hcv_total_cluster_W10 = table_q6_addingCat %>%mutate(cluster = cutree(hca_ward, k = 10))
+plot(hca_ward, ylab = "height", main = "dendrogram of ward's clusters with k=10Clusters")
+rect.hclust(hca_ward, k = 10, border = 2:5)
+
+q19_accuracy = as.data.frame.matrix(t(table(hcv_total_cluster_W10$Category, hcv_total_cluster_W10$cluster)))
+colnames(q19_accuracy)[1] <- "Neg"
+colnames(q19_accuracy)[2] <- "Pos"
+q19_accuracy
+```
+* Based on output, the clusters 1,2,5,6,7,8,9,10 are positive, while 3,4 are negative.
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+q19_accuracy = q19_accuracy %>% mutate(Main = pmax(Neg, Pos))
+accuracy_19 = sum(q19_accuracy$Main)/108
+accuracy_19
+```
+* The accuracy is around `r accuracy_19`
+
+20. What observations can you make about from the previous 4 attempts at hierarchical clustering? I.e., does the clustering result change using different number of clusters? Does higher number of clusters lead to clustering result that is closer to the actual outcomes? Answer these questions and other relevant observations based on the plots and the classification accuracies you have calculated.
+
+* I found out that the clustering accuracy depends on the number of clusters and linkage method. The result shows more accurate result by using ward's linkage method than using complete method. Meanwhile, the higher number of clusters will lead to higher classification accuracy based on the previous output. 
+
+## K-Means Clustering
+
+21. Compute k-means clustering on this dataset using the kmeans() function for two clusters. Then use the table() function and the diagnosis label information to compare the composition (TRUE vs. FALSE in the outcome) of each of the 2 clusters (hint: the cluster information from k-means is stored in the $cluster attribute in the k-means result.) What's the clustering classification accuracy?
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+q21_accuracy = as.data.frame.matrix(t(
+  table(table_q6_addingCat$Category, kmeans(table_q6, centers = 2)$cluster)))
+colnames(q21_accuracy)[1] <- "Neg"
+colnames(q21_accuracy)[2] <- "Pos"
+q21_accuracy
+```
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+q21_accuracy = q21_accuracy %>% mutate(Main = pmax(Neg, Pos))
+accuracy_21 = sum(q21_accuracy$Main)/108
+accuracy_21
+```
+The accuracy is around `r accuracy_21`
+
+22. Visualize the clusters using the fiz_cluster() function from factoextra package. You should have the x-axis as PC1 and y-axis as PC, and produce come form of cluster boundaries around the two clusters. 
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+fviz_cluster(kmeans(table_q6, centers = 2), table_q6, ellipse.type = "norm", palette = "Set2", xlab = "PC1", ylab = "PC2", main = "cluster visualization")
+```
+
+
+23. While we can adjust the number of clusters in hierarchical clustering to achieve better clustering, we do not do so for k-means. Why do you think that is the case? In this dataset, which method seem to be more appropriate? Give your reasoning briefly, taking into consideration both the accuracies and the different procedures of analysis.
+
+
+* In K-means method, we have to fix the number of clusters (K) at the beginning. We cannot change the number of clusters later. That is the reason we cannot adjust the number of clusters for K-mean
+* In this dataset, I think Hierarchical clustering is more appropriate than k-means. The main reason is that this data set doesn't contain too many observations. We can have more chances to improve the accuracy by using Hierarchical clustering without initializing too many clusters at the beginning. Meanwhile, by observing the graph in 22, the shape of the data doesn't look like a perfect circle, especially when we remove the 'ellipse.type = "norm"' from the plot function. Eventually, by using Hierarchical method, we can get a higher accuracy than using k-means.
+
+---
+
+## kNN
+
+24. We will randomly sample from our dataset to split it into 80:20 (training:test) datasets using convenient tools from caTools package. After you generate train_df and test_df, separate train_df into X_train, and y_train where X_train contains only independent variables and y_train contains on the "diagnosed" label. Perform the same separation for test_df.
+- Note: SplitRatio is set to 0.8 to make training set comprised of 80% of the original data
+- Note: Set seed to 2021
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+set.seed(2021)
+splitd = sample.split(table_q6_addingCat$Category, SplitRatio = 0.8)
+#created the train and test data:
+train_df = table_q6_addingCat[splitd, 1:ncol(table_q6_addingCat)]
+test_df = table_q6_addingCat[!splitd, 1:ncol(table_q6_addingCat)]
+
+#create x :
+X_train = train_df%>%select(-Category)
+X_test = test_df%>%select(-Category)
+
+#create y:
+y_train = train_df%>%select(Category)
+y_test = test_df%>%select(Category)
+#
+```
+
+25. Generate a KNN model using the knn() function. Usek = sqrt(# observations in the training set).
+- Learn the syntax of knn() from https://www.rdocumentation.org/packages/class/versions/7.3-
+15/topics/knn.
+- Note: The dependent variable that you aim to predict should not be included in the training and test data frames that you pass along to knn().
+- Note: The labels for the training dataset should be passed separately. Recall that we designed two new vectors for this purpose: y_train and y_test 
+- It should be clear to you that the output of knn() is a list of the predicted values for the test set you passed.
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+knn_25 = knn(train = X_train,
+                 test = X_test,
+                 cl = y_train[,1])
+knn_25
+#
+```
+
+26. Produce a confusion matrix demonstrates the number of true and false positives, and true and false negatives, that our model predicts. The confusion matrix displays this in a table so that we can clearly see where the model performs well and where it fails to make the correct prediction. Create a confusion matrix using the CrossTable() function from the package gmodels.
+- Set prop.chisq = FALSE so that chi-squared contribution from each cell is ignored. Only the minimum amount of information is needed to answer this question.
+- Learn the syntax of the CrossTable() function from
+https://www.rdocumentation.org/packages/gmodels/versions/2.18.1/topics/CrossTable
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+k=CrossTable(y_test[, 1], knn_25, prop.chisq = FALSE, prop.t = FALSE, prop.r = FALSE, prop.c = FALSE)
+#
+```
+
+27. How many false positives are there (hint:  here, a positive call means that the image contains signs of Diabetic Retinopathy)? Using the definitions that we learned in class, calculate and print accuracy, sensitivity, error rate, and precision. You may choose either to use the information from the printed confusion matrix or to calculate using the equations from lecture slides. However, make sure you show your code, print out the results of the commands, and annotate your code clearly for full credit.
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+k = as.data.frame(k)
+
+#1 false positive.
+
+#ACCURACY:
+acc = (9+9)/21
+#sensitivity:
+sen = 9/(9+2)
+#error 
+err = 1-acc
+#precision:
+pre = (9)/(9+1)
+```
+The Accuracy is: `r acc`, the sensitivity is: `r sen`, the error rate is: `r err`, the precision is `r pre`
+
+---
+
+# K-fold cross validation with kNN, where K and k have different meanings
+
+28. In the previous kNN model, we divided up our data into 80% training and 20% test. We built the model on the 80% of the training data and tested how well the kNN model performed on the 20% of the test data. Another way that we can evaluate our model, besides holding out 20% of the data for testing, is to use a cross-validation method. Recall from class the K-fold cross validation strategy.
+The createFolds() function samples observations from the dataset randomly, and the code for which is provided. You are free to change the names in this code to the objects in your own codes. The set.seed function ensures that randomly generated numbers are the same each time so that your answers are consistent. This allows for greater reproducibility, avoiding unnecessary randomness. set.seed(2021) is included when loading the packages. The number 2021 is selected arbitrarily.
+
+Now, we are going to build a knn model again with the more robust cross-validation method to evaluate its output. Train five kNN models using k = 11 neighbors for each of the K= 5 CV folds and compute the error rates of each kNN model on the held-out test data for each fold. The error rate is the number of observations that are classified incorrectly divided by the total number of predictions made. Print the average of the 5 error rates. 
+```{r echo=TRUE, warning=FALSE, fig.width=8, fig.height=6}
+
+set.seed(2021)
+folds = createFolds(table_q6_addingCat$Category, k = 5)
+
+f = c("Fold1", "Fold2", "Fold3", "Fold4", "Fold5")
+Xpredic = table_q6_addingCat%>%select(-Category)
+Yrespond = table_q6_addingCat%>%select(Category)
+error = c()
+#index of folds
+NoFold = c()
+for (i in f){
+  mode = knn(train = Xpredic[-c(unlist(folds[i])), ],
+                 test = Xpredic[c(unlist(folds[i])), ],
+                 cl = Yrespond[-c(unlist(folds[i])), 1], k = 11)
+  result = CrossTable(Yrespond[c(unlist(folds[i])), 1], mode, prop.chisq = FALSE)
+  result = as.data.frame(result)
+  total = sum(result$t.Freq)
+  
+  result_false = result%>%filter(t.x!=t.y)
+  e = sum(result_false$t.Freq)/total
+  
+  error = c(error, e)
+  NoFold = c(NoFold, i)
+Error_record = data.frame(NoFold, error)
+mean_error = mean(error)
+
+}
+```
+The mean error of 5 runs is `r mean_error`
+
+29. Plot error rates vs. k values (from knn) for all odd numbers between 5 and 13 (i.e. 5,7,9,11,...,21) using the methods we used in question 10. Which k value gives the minimum average error rate when you perform 5-fold cross validation? Explain what may have caused your initial kNN models from Question 10 to have high error rates and how k-Fold Cross Validation has improved the accuracy rate of your kNN models.
+
+```{r echo=TRUE, warning=FALSE, message = FALSE, results='hide', fig.width=8, fig.height=8}
+set.seed(2022)
+idx <- createFolds(table_q6_addingCat$Category, k = 5)
+```
+
+```{r echo=TRUE, warning=FALSE, message = FALSE, results='hide', fig.width=8, fig.height=8}
+ks <- c(5,7,9,11,13)
+responseY <- table_q6_addingCat[,c(2)]
+predictorX <- table_q6_addingCat[,-c(2)]
+res <- sapply(ks, function(k) {
+  # try out each version of k from 1 to 12
+  
+  res.k <- sapply(seq_along(idx), function(i) {
+    # loop over each of the 5 cross-validation folds
+
+    # predict the held-out samples using k nearest neighbors
+    pred <- knn(train = predictorX[-idx[[i]],],
+      test = predictorX[idx[[i]], ],
+      cl = responseY[-idx[[i]]], k = k)
+
+    # the ratio of misclassified samples
+    mean(table_q6_addingCat$Category[idx[[i]]] != pred)
+  })
+  
+  # average over the 5 folds
+  mean(res.k)
+})
+plot(ks, res, type="o", main = "mean_error by k", xlab="mean error rate", ylab="k")
+```
+
+
+Based on the output, it is easy to observe that the k=5 has the least mean error rate. As the K increases, KNN method will consider more points together, which will leads to a smooth boundary(higher error rate). In question 10, we separate our data into two parts, the train data and the validation data. In this case, only a fixed group of data are used to train the model and also a fixed group pf data to do validations. Since we have limited data here, the error rate will be very high. However, when we use the K-fold method, every data observation could participate in training the model and also validating the model. This simulation of using different groups of data set to train the model and validate the model every time would significantly reduce the error rate. 
